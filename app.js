@@ -10,6 +10,7 @@ const template = document.getElementById("raceTemplate");
 
 let races = [];
 let activeFilter = "all";
+let currentTargetDate = "";
 
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -81,6 +82,7 @@ filters.addEventListener("click", (event) => {
 });
 
 function showData(targetDate) {
+  currentTargetDate = targetDate || "";
   dateChip.textContent = targetDate || "日付不明";
   candidateCount.textContent = races.filter((race) => race.decision === "購入候補").length;
   raceCount.textContent = races.filter((race) => race.horseName).length;
@@ -210,6 +212,179 @@ function formatTargetDate(value) {
 function text(value) {
   return value === null || value === undefined ? "" : String(value).trim();
 }
+
+// History is independent of the current-day cache. Excel imports never write it.
+const HISTORY_PREFIX = "ooi-keiba-prediction-history-v1:";
+
+function historyDateKey(value) {
+  const match = String(value || "").trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (!match) throw new Error("対象日を確認できません。日付の入ったExcelを読み込んでください。");
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() + 1 !== Number(month) || date.getUTCDate() !== Number(day)) {
+    throw new Error("対象日が正しくありません。Excelの日付を確認してください。");
+  }
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function savePredictionHistory() {
+  const dateKey = historyDateKey(currentTargetDate);
+  const populated = races.filter(race => race.horseName || race.horses?.length);
+  if (!populated.length) throw new Error("保存する予想がありません。先にExcelを読み込んでください。");
+  if (populated.some(race => !Array.isArray(race.horses) || !race.horses.length)) {
+    throw new Error("全馬ランキングが不足しているレースがあります。全馬データを含むExcelを読み込み直してください。");
+  }
+  const key = HISTORY_PREFIX + dateKey;
+  if (localStorage.getItem(key) !== null) {
+    throw new Error(`${dateKey}は保存済みです。最初の予想を保持するため上書きしません。`);
+  }
+  const savedAt = new Date().toISOString();
+  // Serialize all original fields, including overview gap/decision and every horse's
+  // rank, number, name, jockey, score, rating and popularity. No recalculation.
+  const snapshot = { schemaVersion: 1, venue: "大井", dateKey,
+    targetDate: currentTargetDate, savedAt, races: JSON.parse(JSON.stringify(races)) };
+  localStorage.setItem(key, JSON.stringify(snapshot));
+  return snapshot;
+}
+
+function createHistoryUI() {
+  const section = document.createElement("section");
+  section.id = "ooi-prediction-history";
+  section.style.cssText = "margin:16px 0;padding:16px;border:1px solid #aaa;border-radius:12px;";
+  const controls = document.createElement("div");
+  controls.style.cssText = "display:flex;gap:10px;flex-wrap:wrap";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "今日の予想を保存";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.textContent = "予想履歴";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-controls", "ooi-history-panel");
+  for (const button of [save, toggle]) {
+    button.style.cssText = "padding:10px 14px;min-height:44px;cursor:pointer";
+    controls.appendChild(button);
+  }
+  const note = document.createElement("p");
+  note.textContent = "読込中の対象日の予想を固定保存します。同じ日は上書きしません。履歴はこのブラウザに保存され、ブラウザのデータ削除で消えます。";
+  const status = document.createElement("p");
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  const panel = document.createElement("div");
+  panel.id = "ooi-history-panel";
+  panel.hidden = true;
+  section.append(controls, note, status, panel);
+  raceList.before(section);
+
+  function displaySnapshot(snapshot) {
+    panel.replaceChildren();
+    const back = document.createElement("button");
+    back.type = "button";
+    back.textContent = "履歴一覧に戻る";
+    back.addEventListener("click", displayList);
+    const title = document.createElement("h2");
+    title.textContent = `${snapshot.targetDate} 大井・保存済み予想`;
+    const stamp = document.createElement("p");
+    stamp.textContent = `保存日時：${new Date(snapshot.savedAt).toLocaleString("ja-JP")}`;
+    panel.append(back, title, stamp);
+    for (const race of snapshot.races) {
+      const details = document.createElement("details");
+      details.style.cssText = "margin:12px 0;padding:10px;border:1px solid #aaa;border-radius:8px";
+      const heading = document.createElement("summary");
+      heading.style.cursor = "pointer";
+      heading.textContent = `${race.raceNumber}R ${race.horseName || "データなし"} ／ ${race.decision || "—"}`;
+      const overview = document.createElement("p");
+      overview.textContent = `能力点：${race.score ?? "—"} ／ 能力差：${race.gap ?? "—"} ／ 人気：${race.popularity ?? "—"}`;
+      const ranking = document.createElement("div");
+      ranking.style.overflowX = "auto";
+      renderDetails(ranking, race);
+      // The original ranking table omits popularity; show the saved values here.
+      const table = ranking.querySelector("table");
+      if (table) {
+        const th = document.createElement("th");
+        th.scope = "col";
+        th.textContent = "人気";
+        table.querySelector("thead tr").appendChild(th);
+        table.querySelectorAll("tbody tr").forEach((row, index) => {
+          const td = document.createElement("td");
+          td.textContent = race.horses[index].popularity ?? "—";
+          row.appendChild(td);
+        });
+      }
+      details.append(heading, overview, ranking);
+      panel.appendChild(details);
+    }
+  }
+
+  function displayList() {
+    panel.replaceChildren();
+    const title = document.createElement("h2");
+    title.textContent = "予想履歴";
+    panel.appendChild(title);
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(HISTORY_PREFIX)) keys.push(key);
+      }
+      keys.sort().reverse();
+      if (!keys.length) {
+        const empty = document.createElement("p");
+        empty.textContent = "保存済みの予想はありません。";
+        panel.appendChild(empty);
+      }
+      for (const key of keys) {
+        const item = document.createElement("p");
+        try {
+          const snapshot = JSON.parse(localStorage.getItem(key));
+          if (snapshot?.schemaVersion !== 1 || !Array.isArray(snapshot.races) || snapshot.races.some(race => !race || (race.horses != null && (!Array.isArray(race.horses) || race.horses.some(horse => !horse))))) {
+            throw new Error("履歴形式が不正です");
+          }
+          const button = document.createElement("button");
+          button.type = "button";
+          button.style.cssText = "padding:10px;min-height:44px;cursor:pointer";
+          const count = snapshot.races.filter(race => race.horseName || race.horses?.length).length;
+          button.textContent = `${snapshot.targetDate} 大井 ${count}R分 — ${new Date(snapshot.savedAt).toLocaleString("ja-JP")} 保存`;
+          button.addEventListener("click", () => displaySnapshot(snapshot));
+          item.appendChild(button);
+        } catch {
+          item.textContent = `${key.slice(HISTORY_PREFIX.length)}：履歴を読み込めません。保存データは保持しています。`;
+        }
+        panel.appendChild(item);
+      }
+    } catch {
+      status.textContent = "履歴を読み込めません。ブラウザの保存設定を確認してください。";
+    }
+  }
+
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      // Serialize saves across tabs on browsers with Web Locks support.
+      const snapshot = navigator.locks?.request
+        ? await navigator.locks.request(HISTORY_PREFIX, savePredictionHistory)
+        : savePredictionHistory();
+      status.textContent = `${snapshot.targetDate}の予想を保存しました。`;
+      if (!panel.hidden) displayList();
+    } catch (error) {
+      status.textContent = error.name === "QuotaExceededError"
+        ? "保存容量が不足しています。履歴は保存できませんでした。既存の履歴は保持しています。"
+        : error.name === "SecurityError"
+          ? "ブラウザで保存が許可されていません。保存設定を確認してください。"
+          : error.message || "予想を保存できませんでした。";
+    } finally {
+      save.disabled = false;
+    }
+  });
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+    toggle.textContent = panel.hidden ? "予想履歴" : "予想履歴を閉じる";
+    if (!panel.hidden) displayList();
+  });
+}
+
+createHistoryUI();
 
 try {
   const saved = JSON.parse(localStorage.getItem("ooi-keiba-mobile-data-v2"));
