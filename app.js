@@ -133,7 +133,7 @@ function readRaceDetails(workbook, date, raceNumber, overview) {
   if (detail.horses.length) {
     const top = detail.horses[0];
     if (text(top.horseNumber) !== text(overview[1]) || text(top.horseName) !== text(overview[2]) || Math.abs(top.score - Number(overview[4])) > 0.01) {
-      return { horses: [], error: "全馬の計算結果と一覧が一致しません。Excelで全レース更新を実行・保存して、読み込み直してください。" };
+      return { ...detail, warning: "Excel一覧と再計算点に差があります。全馬順位はスマホ側の再計算結果です。" };
     }
   }
   return detail;
@@ -147,6 +147,12 @@ function renderDetails(container, race) {
     note.textContent = race.error || "全馬のランキングを表示するには、Excelをもう一度選択してください。";
     container.appendChild(note);
     return;
+  }
+  if (race.warning) {
+    const warning = document.createElement("p");
+    warning.className = "detail-note";
+    warning.textContent = race.warning;
+    container.appendChild(warning);
   }
   const title = document.createElement("h2");
   title.textContent = `${race.raceNumber}R 全馬ランキング（${horses.length}頭）`;
