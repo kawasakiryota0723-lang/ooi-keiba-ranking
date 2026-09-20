@@ -31,7 +31,7 @@ function getDetails(workbook, date, raceNumber) {
   if(!current.length) return {horses:[],error:'このレースの出走データがありません。Excelを更新して読み込み直してください。'};
   if(current.some(r=>!num(r['距離']))) return {horses:[],error:'距離データが不足しています。Excelで「すべて更新」を実行してください。'};
   const result=calc(all,date,raceNumber,'大井');
-  return {horses:result.sorted.map(h=>({rank:h.rank,horseNumber:h.r['馬番'],horseName:h.r['馬名'],jockey:h.r['騎手名'],score:h.score,popularity:num(h.r['人気']),rating:['◎','○','▲','△','△'][h.rank-1]||''})),error:''};
+  return {gap:result.gap,horses:result.sorted.map(h=>({rank:h.rank,horseNumber:h.r['馬番'],horseName:h.r['馬名'],jockey:h.r['騎手名'],score:h.score,popularity:num(h.r['人気']),rating:['◎','○','▲','△','△'][h.rank-1]||''})),error:''};
 }
 globalThis.OoiRanking={getDetails};
 })();

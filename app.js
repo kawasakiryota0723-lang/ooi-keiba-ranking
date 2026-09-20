@@ -11,6 +11,7 @@ const template = document.getElementById("raceTemplate");
 let races = [];
 let activeFilter = "all";
 let currentTargetDate = "";
+const CURRENT_CACHE_KEY = "ooi-keiba-mobile-data-v3";
 
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -41,28 +42,19 @@ fileInput.addEventListener("change", async (event) => {
     for (let index = 4; index <= 15; index += 1) {
       const row = values[index] || [];
       const raceNumber = normalizeRace(row[0], index - 3);
-      const horseName = text(row[2]);
-      const decision = text(row[6]) || (horseName ? "判定不可" : "対象レースなし");
-
       parsed.push({
         raceNumber,
-        horseNumber: text(row[1]),
-        horseName,
-        popularity: displayNumber(row[3], "—"),
-        score: displayNumber(row[4], "—", 1),
-        gap: displayNumber(row[5], "—", 1),
-        decision,
-        ...readRaceDetails(workbook, Number(sheet.B2?.v), raceNumber, row),
+        ...readRaceDetails(workbook, Number(sheet.B2?.v), raceNumber),
       });
     }
 
     races = parsed;
     const targetDate = formatTargetDate(sheet.B2?.v);
-    try { localStorage.setItem("ooi-keiba-mobile-data-v2", JSON.stringify({ targetDate, races })); } catch {}
+    try { localStorage.setItem(CURRENT_CACHE_KEY, JSON.stringify({ targetDate, races })); } catch {}
     showData(targetDate);
   } catch (error) {
     races = [];
-    try { localStorage.removeItem("ooi-keiba-mobile-data-v2"); } catch {}
+    try { localStorage.removeItem(CURRENT_CACHE_KEY); } catch {}
     raceList.replaceChildren();
     summary.hidden = true;
     filters.hidden = true;
@@ -130,15 +122,23 @@ function renderRaces() {
   }
 }
 
-function readRaceDetails(workbook, date, raceNumber, overview) {
+function readRaceDetails(workbook, date, raceNumber) {
   const detail = OoiRanking.getDetails(workbook, date, raceNumber);
-  if (detail.horses.length) {
-    const top = detail.horses[0];
-    if (text(top.horseNumber) !== text(overview[1]) || text(top.horseName) !== text(overview[2]) || Math.abs(top.score - Number(overview[4])) > 0.01) {
-      return { ...detail, warning: "Excel一覧と再計算点に差があります。全馬順位はスマホ側の再計算結果です。" };
-    }
+  const top = detail.horses[0];
+  if (!top || !Number.isFinite(top.score)) {
+    return { ...detail, horseNumber: "", horseName: "", popularity: "—",
+      score: "—", gap: "—", decision: "判定不可" };
   }
-  return detail;
+  const popularity = top.popularity;
+  const hasPopularity = Number.isInteger(popularity) && popularity >= 1;
+  const gap = detail.gap;
+  const hasGap = Number.isFinite(gap) && gap >= 0;
+  // Both views and the purchase decision use the same calculated ranking.
+  return { ...detail, horseNumber: text(top.horseNumber), horseName: text(top.horseName),
+    popularity: hasPopularity ? String(popularity) : "—",
+    score: displayNumber(top.score, "—", 1), gap: hasGap ? displayNumber(gap, "—", 1) : "—",
+    decision: !hasPopularity || !hasGap ? "判定不可"
+      : popularity === 1 && gap >= 10 ? "購入候補" : "見送り" };
 }
 
 function renderDetails(container, race) {
@@ -387,11 +387,11 @@ function createHistoryUI() {
 createHistoryUI();
 
 try {
-  const saved = JSON.parse(localStorage.getItem("ooi-keiba-mobile-data-v2"));
+  const saved = JSON.parse(localStorage.getItem(CURRENT_CACHE_KEY));
   if (Array.isArray(saved?.races) && saved.races.length) {
     races = saved.races;
     showData(saved.targetDate);
   }
 } catch {
-  try { localStorage.removeItem("ooi-keiba-mobile-data-v2"); } catch {}
+  try { localStorage.removeItem(CURRENT_CACHE_KEY); } catch {}
 }
