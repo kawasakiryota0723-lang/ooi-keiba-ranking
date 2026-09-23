@@ -262,3 +262,13 @@ h2 { margin: 0; font-size: 1.05rem; }
   .race-number { width: 46px; height: 46px; }
   .decision { grid-column: 1 / -1; justify-self: stretch; text-align: center; }
 }
+
+/* Daily import controls */
+[hidden] { display: none !important; }
+.daily-panel { display:block; margin-top:16px; }
+.daily-panel > * + * { margin-top:14px; }
+.daily-panel .upload-button { width:100%; }
+#dateSelect { width:100%; padding:12px; font-size:1rem; border:1px solid #62748d; border-radius:10px; background:#fff; color:#081a35; }
+.upload-button:has(input:disabled) { opacity:.5; cursor:default; }
+#importStatus { overflow-wrap:anywhere; }
+#ooi-prediction-history button { border:1px solid #62748d; border-radius:8px; background:#102c4e; color:#fff; font-size:1rem; }

@@ -8,14 +8,19 @@ const candidateCount = document.getElementById("candidateCount");
 const raceCount = document.getElementById("raceCount");
 const template = document.getElementById("raceTemplate");
 
+let currentBook = null;
+let currentTargetDate = "";
+let importBusy = false;
+const dailyInput = document.getElementById('dailyInput');
+const dateSelect = document.getElementById('dateSelect');
 let races = [];
 let activeFilter = "all";
-let currentTargetDate = "";
-const CURRENT_CACHE_KEY = "ooi-keiba-mobile-data-v3";
+const CURRENT_CACHE_KEY = "ooi-keiba-mobile-data-v5";
 
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
-  if (!file) return;
+  if (!file || importBusy) return;
+  importBusy = true; fileInput.disabled = true; dailyInput.disabled = true; dateSelect.disabled = true;
 
   setMessage("読み込み中…", `${file.name}を確認しています。`);
 
@@ -24,35 +29,14 @@ fileInput.addEventListener("change", async (event) => {
     const workbook = XLSX.read(data, { type: "array", cellDates: false });
     const venue = text(workbook.Sheets["自動計算"]?.B3?.v || workbook.Sheets["当日ランキング"]?.B3?.v);
     if (venue !== "大井") throw new Error("大井用の集計Excelを選んでください。競馬場が大井になっているか確認してください。");
-    const sheet = workbook.Sheets["当日全レース"];
+    if (!workbook.Sheets['NAR統合データ']) throw new Error('過去データを含む「NAR統合データ」シートが必要です。');
+    fillDates(workbook, Number(workbook.Sheets['当日ランキング']?.B2?.v || workbook.Sheets['当日全レース']?.B2?.v));
+    currentBook = workbook;
+    document.getElementById("importStatus").textContent = "Excelを読み込みました。当日CSVがあれば追加できます。";
+    renderBook(Number(dateSelect.value));
 
-    if (!sheet) {
-      throw new Error("「当日全レース」シートが見つかりません。Excelでシート名を確認してください。");
-    }
-
-    const values = XLSX.utils.sheet_to_json(sheet, {
-      header: 1,
-      range: "A1:G16",
-      raw: true,
-      defval: "",
-      blankrows: true,
-    });
-
-    const parsed = [];
-    for (let index = 4; index <= 15; index += 1) {
-      const row = values[index] || [];
-      const raceNumber = normalizeRace(row[0], index - 3);
-      parsed.push({
-        raceNumber,
-        ...readRaceDetails(workbook, Number(sheet.B2?.v), raceNumber),
-      });
-    }
-
-    races = parsed;
-    const targetDate = formatTargetDate(sheet.B2?.v);
-    try { localStorage.setItem(CURRENT_CACHE_KEY, JSON.stringify({ targetDate, races })); } catch {}
-    showData(targetDate);
   } catch (error) {
+    currentBook = null; dailyInput.disabled = true; dateSelect.disabled = true;
     races = [];
     try { localStorage.removeItem(CURRENT_CACHE_KEY); } catch {}
     raceList.replaceChildren();
@@ -62,7 +46,33 @@ fileInput.addEventListener("change", async (event) => {
     setMessage("読み込めませんでした", error.message || "Excelファイルを確認してください。", true);
   } finally {
     fileInput.value = "";
+    importBusy = false; fileInput.disabled = false; dailyInput.disabled = !currentBook; dateSelect.disabled = !currentBook;
   }
+});
+
+function fillDates(book, preferred) {
+ const rows=XLSX.utils.sheet_to_json(book.Sheets['NAR統合データ'],{defval:null});
+ const dates=[...new Set(rows.filter(r=>r['競馬場']==='大井').map(r=>Number(r['競走年月日'])))].filter(n=>/^\d{8}$/.test(String(n))).sort((a,b)=>b-a);
+ if(!dates.length) throw new Error('大井の出走データがありません。');
+ dateSelect.replaceChildren(...dates.map(d=>{const o=document.createElement('option');o.value=d;o.textContent=formatTargetDate(d);return o;}));
+ dateSelect.value=dates.includes(preferred)?preferred:dates[0];dateSelect.disabled=false;
+}
+function renderBook(date) {
+ races=Array.from({length:12},(_,i)=>({raceNumber:i+1,...readRaceDetails(currentBook,date,i+1)}));
+ const targetDate=formatTargetDate(date);
+ try{localStorage.setItem(CURRENT_CACHE_KEY,JSON.stringify({targetDate,races}));}catch{}
+ showData(targetDate);
+}
+dateSelect.addEventListener('change',()=>renderBook(Number(dateSelect.value)));
+dailyInput.addEventListener('change',async event=>{
+ const files=[...event.target.files];if(!files.length||!currentBook||importBusy)return;
+ importBusy=true; fileInput.disabled=true; dailyInput.disabled=true; dateSelect.disabled=true;
+ try{
+  const result=await OoiDaily.merge(currentBook,files);
+  currentBook=result.workbook;fillDates(currentBook,result.date);renderBook(result.date);
+  document.getElementById('importStatus').textContent=`本日の大井 ${result.count}頭を更新しました。${result.odds?'単勝人気も反映しました。':'有効な単勝オッズは未取得です。人気による購入判定は保留します。'}`;
+ }catch(error){document.getElementById('importStatus').textContent=error.message+' 表示中のデータは変更していません。';}
+ finally{importBusy=false;fileInput.disabled=false;dailyInput.disabled=false;dateSelect.disabled=false;dailyInput.value='';}
 });
 
 filters.addEventListener("click", (event) => {
@@ -104,7 +114,7 @@ function renderRaces() {
     const node = template.content.cloneNode(true);
     const card = node.querySelector(".race-card");
     const isCandidate = race.decision === "購入候補";
-    const isUnavailable = race.decision === "判定不可" || race.decision === "対象レースなし";
+    const isUnavailable = ["判定不可", "対象レースなし", "人気・点差未取得"].includes(race.decision);
     card.classList.toggle("candidate", isCandidate);
     card.classList.toggle("unavailable", isUnavailable);
     node.querySelector(".race-number").textContent = `${race.raceNumber}R`;
@@ -122,23 +132,23 @@ function renderRaces() {
   }
 }
 
-function readRaceDetails(workbook, date, raceNumber) {
+function readRaceDetails(workbook, date, raceNumber, overview) {
   const detail = OoiRanking.getDetails(workbook, date, raceNumber);
   const top = detail.horses[0];
   if (!top || !Number.isFinite(top.score)) {
     return { ...detail, horseNumber: "", horseName: "", popularity: "—",
-      score: "—", gap: "—", decision: "判定不可" };
+      score: "—", gap: "—", decision: detail.horses.length ? "判定不可" : "対象レースなし" };
   }
-  const popularity = top.popularity;
-  const hasPopularity = Number.isInteger(popularity) && popularity >= 1;
-  const gap = detail.gap;
-  const hasGap = Number.isFinite(gap) && gap >= 0;
-  // Both views and the purchase decision use the same calculated ranking.
-  return { ...detail, horseNumber: text(top.horseNumber), horseName: text(top.horseName),
-    popularity: hasPopularity ? String(popularity) : "—",
-    score: displayNumber(top.score, "—", 1), gap: hasGap ? displayNumber(gap, "—", 1) : "—",
-    decision: !hasPopularity || !hasGap ? "判定不可"
-      : popularity === 1 && gap >= 10 ? "購入候補" : "見送り" };
+  const hasPopularity = Number.isInteger(top.popularity) && top.popularity >= 1;
+  const hasGap = Number.isFinite(detail.gap) && detail.gap >= 0;
+  return { ...detail,
+    horseNumber: text(top.horseNumber), horseName: text(top.horseName),
+    popularity: hasPopularity ? String(top.popularity) : "—",
+    score: displayNumber(top.score, "—", 1),
+    gap: hasGap ? displayNumber(detail.gap, "—", 1) : "—",
+    decision: OoiRules.decision({raceName: detail.raceName,
+      popularity: hasPopularity ? top.popularity : null,
+      gap: hasGap ? detail.gap : null, finished: detail.finished, error: detail.error}) };
 }
 
 function renderDetails(container, race) {
@@ -149,12 +159,6 @@ function renderDetails(container, race) {
     note.textContent = race.error || "全馬のランキングを表示するには、Excelをもう一度選択してください。";
     container.appendChild(note);
     return;
-  }
-  if (race.warning) {
-    const warning = document.createElement("p");
-    warning.className = "detail-note";
-    warning.textContent = race.warning;
-    container.appendChild(warning);
   }
   const title = document.createElement("h2");
   title.textContent = `${race.raceNumber}R 全馬ランキング（${horses.length}頭）`;
@@ -179,6 +183,18 @@ function renderDetails(container, race) {
     body.appendChild(row);
   }
   table.appendChild(body); container.appendChild(table);
+  const note = document.createElement("p");
+  note.className = "detail-note";
+  const notes = [];
+  if (race.raceName) notes.push(race.raceName);
+  if (race.decision === "新馬・参考") notes.push("新馬戦は参考順位です。購入候補から除外しています。");
+  if (race.decision === "人気・点差未取得") notes.push("人気または点差が未取得のため、購入判定を保留しています。");
+  if (race.finished) notes.push("結果取込後の参考計算です。事前予想の実績には含めません。");
+  notes.push("複勝は発売開始時5〜7頭なら2着まで、8頭以上なら3着まで。結果判定には公式払戻データを使います。");
+  const top = horses[0];
+  if (race.finished && top.place) notes.push(`表示1位の結果：${top.finish || '未取得'}着／${top.place.status}${top.place.payout === null ? '' : `（100円あたり${top.place.payout}円）`}`);
+  note.textContent = notes.join(" ");
+  container.appendChild(note);
 }
 
 function setMessage(title, detail, isError = false) {

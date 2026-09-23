@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#081a35" />
     <meta name="description" content="大井競馬の当日全レースをExcelから読み込む個人用ビューア" />
     <title>大井競馬 当日ランキング</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260923" />
   </head>
   <body>
     <main class="app-shell">
@@ -28,6 +28,15 @@
           <input id="fileInput" type="file" accept=".xlsb,.xlsx,.xls" />
         </label>
         <p class="privacy">ファイルは端末内だけで処理され、外部には送信されません。</p>
+      </section>
+
+      <section class="upload-panel daily-panel" aria-labelledby="dailyTitle">
+        <h2 id="dailyTitle">当日CSVで更新</h2>
+        <p>先に過去データ入りの大井Excelを選択。NARのZIPを展開し、本日のhorselist・racelist・paybackの3つと、oddsがあれば一緒に選びます。</p>
+        <label class="upload-button" for="dailyInput"><span>当日CSVを選択（複数）</span><input id="dailyInput" type="file" accept=".csv" multiple disabled /></label>
+        <p id="importStatus" class="privacy" role="status">CSVは日本時間の当日分のみ対応。ページを開き直して更新する場合は、Excelを再選択してください。</p>
+        <label for="dateSelect">表示する日付</label>
+        <select id="dateSelect" disabled aria-label="表示する日付"><option>Excelを選択してください</option></select>
       </section>
 
       <section class="summary" id="summary" hidden>
@@ -52,7 +61,7 @@
       <section class="message" id="message" aria-live="polite">
         <div class="empty-mark">12R</div>
         <h2>当日の予想をスマホ表示</h2>
-        <p>Excelで「全レース更新」を実行して保存した後、そのファイルを選択します。</p>
+        <p>更新・保存済みの大井Excelを選び、表示する日付を選択します。</p>
       </section>
 
       <section class="race-list" id="raceList" aria-label="レース一覧"></section>
@@ -81,7 +90,9 @@
     </template>
 
     <script src="./xlsx.full.min.js"></script>
-    <script src="./ranking.js"></script>
-    <script src="./app.js"></script>
+    <script src="./rules.js?v=20260923"></script>
+    <script src="./ranking.js?v=20260923"></script>
+    <script src="./daily.js?v=20260923"></script>
+    <script src="./app.js?v=20260923"></script>
   </body>
 </html>

@@ -31,7 +31,11 @@ function getDetails(workbook, date, raceNumber) {
   if(!current.length) return {horses:[],error:'このレースの出走データがありません。Excelを更新して読み込み直してください。'};
   if(current.some(r=>!num(r['距離']))) return {horses:[],error:'距離データが不足しています。Excelで「すべて更新」を実行してください。'};
   const result=calc(all,date,raceNumber,'大井');
-  return {gap:result.gap,horses:result.sorted.map(h=>({rank:h.rank,horseNumber:h.r['馬番'],horseName:h.r['馬名'],jockey:h.r['騎手名'],score:h.score,popularity:num(h.r['人気']),rating:['◎','○','▲','△','△'][h.rank-1]||''})),error:''};
+  const raceName=current[0]['レース名'] || '';
+  const payouts=XLSX.utils.sheet_to_json(workbook.Sheets['NAR払戻データ'] || {},{defval:null}).filter(r=>+r['競走年月日']===date&&+r['レース番号']===raceNumber&&r['競馬場']==='大井');
+  const finished=current.some(r=>num(r['着順'])>0 || /中止|失格/.test(String(r['着順'] || '')));
+  const decision=OoiRules.decision({raceName,popularity:result.sorted[0]?.r['人気'],gap:result.gap,finished});
+  return {gap:result.gap,raceName,decision,finished,horses:result.sorted.map(h=>({rank:h.rank,horseNumber:h.r['馬番'],horseName:h.r['馬名'],jockey:h.r['騎手名'],score:h.score,popularity:num(h.r['人気']),finish:h.r['着順'],place:OoiRules.placeResult(h.r,payouts),rating:/新馬/.test(raceName)?'':['◎','○','▲','△','△'][h.rank-1]||''})),error:''};
 }
 globalThis.OoiRanking={getDetails};
 })();
